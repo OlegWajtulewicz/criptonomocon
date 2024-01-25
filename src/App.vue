@@ -9,7 +9,7 @@ export default {
       filter: "", 
 
 	  tickers: [ ],
-	  sel: null,
+	  selectedTicker: null,
 
 	  graph: [],
       page: 1,
@@ -19,13 +19,22 @@ export default {
   created() {
     const windowData = Object.fromEntries(new URL(window.location).searchParams.entries());
 
-    if (windowData.filter) {
-        this.filter = windowData.filter;
-    }
+    const VALID_KEYS = ["filter", "page"];
 
-    if (windowData.page) {
-        this.page = windowData.page;
-    }
+    VALID_KEYS.forEach(key => {
+        if (windowData[key]) {
+            this[key] = windowData[key];
+        }
+    });
+
+    //Object.assign(this, _.pick(windowData, VALID_KEYS));
+
+    // if (windowData.filter) {
+    //     this.filter = windowData.filter;
+    // }
+    // if (windowData.page) {
+    //     this.page = windowData.page;
+    // }
 
     const tickersData = localStorage.getItem("cryptonomicon-list");
     if (tickersData) {
@@ -36,33 +45,43 @@ export default {
     }
   },
 
-    computed: {
-        startIndex() {
-            return (this.page - 1) * 6;
-        },
-        endIndex() {
-            return this.page * 6;
-        },
-        // флажок для пагинации
-        filteredTickers() {
-            // проверка отфильтрованного массива
-            return this.tickers.filter(ticker =>  ticker.name.includes(this.filter)
+  computed: {
+      startIndex() {
+          return (this.page - 1) * 6;
+      },
+      endIndex() {
+          return this.page * 6;
+      },
+      // флажок для пагинации
+      filteredTickers() {
+          // проверка отфильтрованного массива
+          return this.tickers.filter(ticker =>  ticker.name.includes(this.filter)
+          );
+      },
+      paginatedTickers() {
+          return this.filteredTickers.slice(this.startIndex, this.endIndex);
+      },
+      hasNextPage() {
+          return this.filteredTickers.length > this.endIndex;
+      },
+      normalizedGraph() {
+        const maxValue = Math.max(...this.graph);
+        const minValue = Math.min(...this.graph);
+        // испавление сломаного графика
+        if (maxValue === minValue) {
+            return this.graph.map(() => 50);
+        }
+        return this.graph.map(
+                price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
             );
         },
-        paginatedTickers() {
-            return this.filteredTickers.slice(this.startIndex, this.endIndex);
-        },
-        hasNextPage() {
-            return this.filteredTickers.length > this.endIndex;
-        },
-        normalizedGraph() {
-		const maxValue = Math.max(...this.graph);
-		const minValue = Math.min(...this.graph);
-		return this.graph.map(
-            price => 5 + ((price - minValue) * 95) / (maxValue - minValue)
-            );
-	    },
-    },
+    pageStateOptions() {
+        return {
+            filter: this.filter,
+            page: this.page,
+        }
+    }
+},
 
   methods: {
     
@@ -83,7 +102,7 @@ export default {
                 data.USD = "-";
             }
 
-			if (this.sel?.name === tickerName) {
+			if (this.selectedTicker?.name === tickerName) {
 				this.graph.push(data.USD);
 			}
 		}, 3000)
@@ -95,66 +114,54 @@ export default {
 			price: "-"
 		};
 
-        // 1 --- 0, 5
-        // 2 --- 6, 11
-        // (6 * (page - 1), 6 * page - 1)
-		this.tickers.push(currentTicker);
+        // обновление localStorage
+		this.tickers = [...this.tickers, currentTicker];
         this.filter = "";
 
-        localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
         this.subscribeToUpdates(currentTicker.name);
-        const localStorageData = localStorage.getItem("cryptonomicon-list");
-        if (localStorageData) {
-                this.tickers = JSON.parse(localStorageData);
-            }
-
-        // Найти индекс элемента в массиве по имени
-        // const indexToRemove = this.tickers.findIndex(t => t.name === currentTicker.name);
-        // // Проверить, что элемент найден в массиве
-        // if (indexToRemove !== -1) {
-        //     // Удалить элемент из массива
-        //     this.tickers.splice(indexToRemove, 1);
-        //     // Обновить данные в localStorage после удаления
-        //     localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
-        //     // Отписаться от обновлений для удаленного тикера
-        //     this.unsubscribeFromUpdates(currentTicker.name);
-        //     // Проверить и обновить данные из localStorage
-        //     const localStorageData = localStorage.getItem("cryptonomicon-list");
-        //     if (localStorageData) {
-        //         this.tickers = JSON.parse(localStorageData);
-        //     }
-        // } else {
-        //     // Обработка случая, когда элемент не найден в массиве
-        //     console.error("Ticker not found in the array.");
-        // }
+        
 
 		
 	},
 	select(ticker) {
-		this.sel = ticker;
-		this.graph = [];
+		this.selectedTicker = ticker;
 	},
 	handleDelete(tickerToRemove) {
 		this.tickers = this.tickers.filter(t => t !== tickerToRemove);  // удаление тикера
+        if(this.selectedTicker === tickerToRemove) {
+            this.selectedTicker = null;
+        }
 	},
 	
   },
 
   // изменение в  filter с выносом в адресную строку через window.location
   watch: {
+    // когда меняется выбранный тикер сбросить график
+    selectedTicker() {
+        this.graph = [];
+    },
+    // когда меняются тикеры сохранить в localStorage
+    tickers(newValue, oldValue) {
+        console.log(newValue === oldValue);
+        localStorage.setItem("cryptonomicon-list", JSON.stringify(this.tickers));
+    },
+    // когда меняется пагинация на странице (тикеры видимые) сброс страницы шаг назад
+    paginatedTickers() {
+        if (this.paginatedTickers.length === 0 && this.page > 1) {
+            this.page -= 1;
+        }
+    },
+    // когда меняется фильтр сбросить страницу на первую
     filter() {
         this.page = 1;
-        window.history.pushState(
-            null, 
-            document.title, 
-            `${window.location.pathname}?filter=${this.filter}&page=${this.page}`
-            );
         },
-        page() {
+        // при изменении в localStorage обновить адресную строку / внесение изменений в адресную строку URL
+        pageStateOptions(value) {
             window.history.pushState(
                 null, 
                 document.title, 
-                `${window.location.pathname}?filter=${this.filter}&page=${this.page}`
+                `${window.location.pathname}?filter=${value.filter}&page=${value.page}`
             );
         }
     }
@@ -257,12 +264,13 @@ export default {
       <hr v-if="tickers.length" class="w-full border-t border-gray-600 my-4" />
       <dl class="mt-5 grid grid-cols-1 gap-5 sm:grid-cols-3">
         <div
-		  v-for="t in filteredTickers"
+		  v-for="t in paginatedTickers"
 		  :key="t.name"
-		  @click="select(t)"
+		  
 		  :class="{
-			'border-4 border-purple-800' : sel === t, 
+			'border-4 border-purple-800' : selectedTicker === t, 
 		  }"
+          @click="select(t)"
           class="bg-white overflow-hidden shadow rounded-lg border-slate-700 border-solid cursor-pointer"
         >
           <div class="px-4 py-5 sm:p-6 text-center">
@@ -385,9 +393,9 @@ export default {
       <hr class="w-full border-t border-gray-600 my-4" />
 	
 
-    <section v-if="sel" class="relative">
+    <section v-if="selectedTicker" class="relative">
       <h3 class="text-lg leading-6 font-medium text-gray-900 my-8">
-        {{ sel?.name }} - USD
+        {{ selectedTicker?.name }} - USD
       </h3>
       <div class="flex items-end border-gray-600 border-b border-l h-64">
         <div
@@ -407,7 +415,7 @@ export default {
         ></div>
       </div>
       <button
-		@click="sel = null"
+		@click="selectedTicker = null"
         type="button"
         class="absolute top-0 right-0"
       >
