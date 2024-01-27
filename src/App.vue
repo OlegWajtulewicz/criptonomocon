@@ -1,24 +1,40 @@
 <script >
-//import HelloWorld from './components/HelloWorld.vue'
+import { loadTicker } from './api.js'
+
+
 export default {
   name: 'App',
 
   data() {
     return {
-      ticker: "",
-      filter: "", 
+        isLoading: true, 
 
-	  tickers: [ ],
-	  selectedTicker: null,
+        ticker: "",
+        filter: "", 
 
-	  graph: [],
-      page: 1,
+        tickers: [ ],
+        selectedTicker: null,
+        showDuplicateWarning: false,
+        showNotFoundWarning: false,
+
+        graph: [],
+        page: 1,
     }
+  },
+  // preloader
+  mounted() {
+    // Ваши операции по загрузке контента
+    // Например, запрос к API, получение данных, и так далее
+
+    // Здесь просто эмулируем задержку для демонстрации
+    setTimeout(() => {
+      this.isLoading = false; // Устанавливаем, что контент загружен
+    }, 500); // Задержка в 2 секунды (можете заменить на свою логику загрузки)
   },
   // сохранение в localStorage
   created() {
     const windowData = Object.fromEntries(new URL(window.location).searchParams.entries());
-
+    // добавление в URL
     const VALID_KEYS = ["filter", "page"];
 
     VALID_KEYS.forEach(key => {
@@ -39,10 +55,8 @@ export default {
     const tickersData = localStorage.getItem("cryptonomicon-list");
     if (tickersData) {
         this.tickers = JSON.parse(tickersData);
-        this.tickers.forEach(ticker => {
-        this.subscribeToUpdates(ticker.name)
-      });
     }
+    setInterval(this.updatesTickers, 5000);
   },
 
   computed: {
@@ -55,7 +69,12 @@ export default {
       // флажок для пагинации
       filteredTickers() {
           // проверка отфильтрованного массива
-          return this.tickers.filter(ticker =>  ticker.name.includes(this.filter)
+          return this.tickers.filter(ticker =>  {
+                if (typeof ticker.name === 'string') {
+                    return ticker.name.includes(this.filter);
+                }
+                return false
+            }
           );
       },
       paginatedTickers() {
@@ -84,45 +103,133 @@ export default {
 },
 
   methods: {
-    
-    subscribeToUpdates(tickerName) {
-        setInterval(async() => {
-			const f = await fetch(
-				`https://min-api.cryptocompare.com/data/price?fsym=${tickerName}&tsyms=USD&api_key=da4f95c4e20075133d23dee2b4c68e4c5ca689b9e709f9f5486aa7df382c4ae1`
-				);
-			const data = await f.json();
-			
-			// this.tickers.find(t => t.name === tickerName).price = 
-			// data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-            const foundTicker = this.tickers.find(t => t.name === tickerName);
-            if (foundTicker) {
-                foundTicker.price = data.USD > 1 ? data.USD.toFixed(2) : data.USD.toPrecision(2);
-            } else {
-                // Обработка случая, когда элемент не найден.
-                data.USD = "-";
+    // подписка на обновления данных по тикеру
+    async updatesTickers() {
+            if (!this.tickers.length) {
+                return;
             }
 
-			if (this.selectedTicker?.name === tickerName) {
-				this.graph.push(data.USD);
-			}
-		}, 3000)
-		this.ticker = "";
+            try {
+                const exchangeData = await loadTicker(this.tickers.map(t => t.name));
+
+                this.tickers.forEach(ticker => {
+                    const price = exchangeData[ticker.name.toUpperCase()];
+
+                    if (!price) {
+                        ticker.price = "-";
+                        return;
+                    }
+
+                    const normalizedPrice = 1 / price;
+                    const formattedPrice =
+                        normalizedPrice > 1
+                            ? normalizedPrice.toFixed(2)
+                            : normalizedPrice.toPrecision(2);
+
+                    ticker.price = formattedPrice;
+
+                    if (this.selectedTicker?.name === ticker.name) {
+                        this.graph.push(price); // Используйте price, а не exchangeData.USD
+                    }
+                });
+            } catch (error) {
+                console.error("Ошибка при обновлении тикеров:", error);
+
+                // Устанавливаем значения по умолчанию для тикеров
+                this.tickers.forEach(ticker => {
+                    ticker.price = "-";
+                });
+            }
+            // const foundTicker = this.tickers.find(t => t.name === tickerName);
+            // if (foundTicker) {
+            //     foundTicker.price = ExchangeData.USD ? (ExchangeData.USD > 1 ? ExchangeData.USD.toFixed(2) : ExchangeData.USD.toPrecision(2)) : "-";
+            // } else {
+            //     // Обработка случая, когда элемент не найден.
+            //     ExchangeData.USD = "-";
+            // }
+			// if (this.selectedTicker?.name === tickerName) {
+			// 	this.graph.push(ExchangeData.USD);
+			// }
+		
     },
-	add() {
+    // добавление тикера
+	async add() {
+        // Проверяем, показано ли предупреждение, и прерываем добавление в случае дубликата
+        if (this.showDuplicateWarning || this.showNotFoundWarning) {
+        return;
+        }
+
+        // Проверка существования тикера через API
+        const isTickerValid = await this.checkTickerValidity(this.ticker);
+        if (!isTickerValid) {
+        this.showNotFoundWarning = true;
+        return;
+        }
+
 		const currentTicker = {
 			name: this.ticker,
 			price: "-"
 		};
-
-        // обновление localStorage
+        // добавление тикера
 		this.tickers = [...this.tickers, currentTicker];
         this.filter = "";
-
-        this.subscribeToUpdates(currentTicker.name);
-        
-
-		
+        this.ticker = ""; // Сброс значения инпута
+        //this.subscribeToUpdates(currentTicker.name);
 	},
+    // добавление тикера из подсказки
+    addTicker(tickerName) {
+        const isDuplicate = this.tickers.some(ticker => ticker.name === tickerName);
+        if (isDuplicate) {
+            this.showDuplicateWarning = true;
+            return;
+        };
+        const currentTicker = {
+            name: tickerName,
+            price: "-"
+        };
+
+      // обновление localStorage
+      this.tickers = [...this.tickers, currentTicker];
+      this.filter = "";
+      //this.subscribeToUpdates(currentTicker.name);
+      this.showDuplicateWarning = false; 
+      this.showNotFoundWarning = false;
+    },
+    // проверка существования тикера через API
+    async checkTickerValidity(ticker) {
+      try {
+        // Здесь нужно выполнить запрос к API для проверки существования тикера
+        const response  = await fetch(
+            `https://min-api.cryptocompare.com/data/all/coinlist?summary=true`
+            );
+        const result  = await response.json();
+        // Проверка наличия введенного тикера в полученных данных
+        const tickerExists = result.Response === 'Success' &&
+                            !!result.Data[ticker] &&
+                            !!result.Data[ticker].FullName;
+        this.showNotFoundWarning = !tickerExists;
+        return tickerExists;
+      } catch (error) {
+        console.error("Ошибка при проверке тикера:", error);
+        this.showNotFoundWarning = true;
+        return false;
+      }
+    },
+    // hideDuplicateWarning() {
+    //   this.showDuplicateWarning = false;
+    // },
+    // проверка на дубликаты тикеров
+    checkForDuplicate() {
+      const isDuplicate = this.tickers.some(ticker => ticker.name === this.ticker);
+      this.showDuplicateWarning = isDuplicate;
+      this.showNotFoundWarning = false;
+    },
+   
+
+
+
+
+
 	select(ticker) {
 		this.selectedTicker = ticker;
 	},
@@ -172,13 +279,13 @@ export default {
 
 <template>
   <div class="container mx-auto flex flex-col items-center bg-gray-100 p-4">
-  <!-- <div v-if="ticker" class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center">
+  <div v-if="isLoading" class="fixed w-100 h-100 opacity-80 bg-purple-800 inset-0 z-50 flex items-center justify-center">
     <svg class="animate-spin -ml-1 mr-3 h-12 w-12 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
     </svg>
-  </div> -->
-  <div class="container">
+  </div>
+  <div class="container" v-if="!isLoading">
     <section>
       <div class="flex">
         <div class="max-w-xs">
@@ -186,9 +293,12 @@ export default {
             >Тикер  </label
           >
           <div class="mt-1 relative rounded-md shadow-md">
+            <!-- @focus="hideDuplicateWarning" -->
             <input
               v-model="ticker"
 			  @keydown.enter="add"
+              
+              @input="checkForDuplicate"
               type="text"
               name="wallet"
               id="wallet"
@@ -198,23 +308,33 @@ export default {
           </div>
           <div class="flex bg-white shadow-md p-1 rounded-md flex-wrap">
             <span
-                @click="add" class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
+                @click="addTicker('BTC')"
+                 class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
               BTC
             </span>
-            <span class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
+            <span
+                @click="addTicker('DOGE')"
+             class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
               DOGE
             </span>
-            <span class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
+            <span
+            @click="addTicker('SOL')"
+             class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
               SOL
             </span>
-            <span class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
+            <span
+            @click="addTicker('SUI')"
+             class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
               SUI
             </span>
-            <span class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
+            <span
+            @click="addTicker('BNB')"
+             class="inline-flex items-center px-2 m-1 rounded-md text-xs font-medium bg-gray-300 text-gray-800 cursor-pointer">
               BNB
             </span>
           </div>
-          <div hidden class="text-sm text-red-600">Такой тикер уже добавлен</div>
+          <div v-show="showDuplicateWarning" class="text-sm text-red-600">Такой тикер уже добавлен</div>
+          <div v-show="showNotFoundWarning" class="text-sm text-red-600">Тикер не найден</div>
         </div>
       </div>
       <button
@@ -266,12 +386,11 @@ export default {
         <div
 		  v-for="t in paginatedTickers"
 		  :key="t.name"
-		  
 		  :class="{
 			'border-4 border-purple-800' : selectedTicker === t, 
 		  }"
           @click="select(t)"
-          class="bg-white overflow-hidden shadow rounded-lg border-slate-700 border-solid cursor-pointer"
+          class="bg-white overflow-hidden shadow rounded-lg border-solid cursor-pointer"
         >
           <div class="px-4 py-5 sm:p-6 text-center">
             <dt class="text-sm font-medium text-gray-500 truncate">
