@@ -1,5 +1,5 @@
 <script >
-import { loadTicker } from './api.js'
+import { unsubscribeFromTicker, subscribeToTicker } from './api.js'
 
 
 export default {
@@ -55,8 +55,12 @@ export default {
     const tickersData = localStorage.getItem("cryptonomicon-list");
     if (tickersData) {
         this.tickers = JSON.parse(tickersData);
+        this.tickers.forEach(ticker => {
+            subscribeToTicker(ticker.name, newPrice => 
+                this.updateTicker(ticker.name, newPrice));
+        })
     }
-    setInterval(this.updatesTickers, 5000);
+    setInterval(this.updatesTickers, 5000); // интервал обновления тикеров
   },
 
   computed: {
@@ -104,54 +108,24 @@ export default {
 
   methods: {
     // подписка на обновления данных по тикеру
-    async updatesTickers() {
-            if (!this.tickers.length) {
-                return;
-            }
-
-            try {
-                const exchangeData = await loadTicker(this.tickers.map(t => t.name));
-
-                this.tickers.forEach(ticker => {
-                    const price = exchangeData[ticker.name.toUpperCase()];
-
-                    if (!price) {
-                        ticker.price = "-";
-                        return;
-                    }
-
-                    const normalizedPrice = 1 / price;
-                    const formattedPrice =
-                        normalizedPrice > 1
-                            ? normalizedPrice.toFixed(2)
-                            : normalizedPrice.toPrecision(2);
-
-                    ticker.price = formattedPrice;
-
-                    if (this.selectedTicker?.name === ticker.name) {
-                        this.graph.push(price); // Используйте price, а не exchangeData.USD
-                    }
-                });
-            } catch (error) {
-                console.error("Ошибка при обновлении тикеров:", error);
-
-                // Устанавливаем значения по умолчанию для тикеров
-                this.tickers.forEach(ticker => {
-                    ticker.price = "-";
-                });
-            }
-            // const foundTicker = this.tickers.find(t => t.name === tickerName);
-            // if (foundTicker) {
-            //     foundTicker.price = ExchangeData.USD ? (ExchangeData.USD > 1 ? ExchangeData.USD.toFixed(2) : ExchangeData.USD.toPrecision(2)) : "-";
-            // } else {
-            //     // Обработка случая, когда элемент не найден.
-            //     ExchangeData.USD = "-";
-            // }
-			// if (this.selectedTicker?.name === tickerName) {
-			// 	this.graph.push(ExchangeData.USD);
-			// }
-		
+    updateTicker(tickerName, price) {
+      this.tickers
+        .filter(t => t.name === tickerName)
+        .forEach(t => {
+          if (t === this.selectedTicker) {
+            this.graph.push(price);
+          }
+          t.price = price;
+        });
     },
+    // форматирование цены
+    formatPrice(price) {
+        if (price === "-") {
+            return price;
+        }
+        return price > 1 ? price.toFixed(2) : price.toPrecision(2);
+    },
+
     // добавление тикера
 	async add() {
         // Проверяем, показано ли предупреждение, и прерываем добавление в случае дубликата
@@ -174,7 +148,13 @@ export default {
 		this.tickers = [...this.tickers, currentTicker];
         this.filter = "";
         this.ticker = ""; // Сброс значения инпута
-        //this.subscribeToUpdates(currentTicker.name);
+        subscribeToTicker(currentTicker.name, newPrice =>
+            this.updateTicker(currentTicker.name, newPrice)
+        );
+
+	},
+    select(ticker) {
+		this.selectedTicker = ticker;
 	},
     // добавление тикера из подсказки
     addTicker(tickerName) {
@@ -224,20 +204,12 @@ export default {
       this.showDuplicateWarning = isDuplicate;
       this.showNotFoundWarning = false;
     },
-   
-
-
-
-
-
-	select(ticker) {
-		this.selectedTicker = ticker;
-	},
 	handleDelete(tickerToRemove) {
 		this.tickers = this.tickers.filter(t => t !== tickerToRemove);  // удаление тикера
         if(this.selectedTicker === tickerToRemove) {
             this.selectedTicker = null;
         }
+        unsubscribeFromTicker(tickerToRemove.name);
 	},
 	
   },
@@ -397,7 +369,7 @@ export default {
               {{ t.name }} - USD
             </dt>
             <dd class="mt-1 text-3xl font-semibold text-gray-900">
-              {{ t.price }}
+              {{ formatPrice(t.price) }}
             </dd>
           </div>
           <div class="w-full border-t border-gray-200"></div>
